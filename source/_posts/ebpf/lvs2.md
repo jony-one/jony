@@ -220,3 +220,98 @@ __ip_vs_conn_in_get(const struct ip_vs_conn_param *p)
     因为回包到达的 cpu 无法处理该数据包
 
 
+总结：总体来说 conntrack 状态维护最基础通过五元组来完成。将一个 TCP 内的流量打到同一台机器，不同次的请求也同样会
+打到同一台，初始感觉不合理，可能和思维定位在 L7 有关系。将每次请求都转发至不同 RS 上，但是相对 L4 层，每个连接就是每次
+请求，通过两个五元组决定转发方向和转发目标。也不会影响到流量。
+考虑：优化如果每次报文发送都是连续性的
+
+
+
+# 源码分析
+
+总结下来 LVS 依然是在 netfilter 上展开的，但是相对于 LVS 来说核心概念主要涉及连接表和调度算法。它们是 LVS 的核心内容
+
+netfilter 的 HOOK 点对应于内核中的方法：
+- `NF_INET_PRE_ROUTING` 这是所有入栈数据包的第一个挂载点，挂载点位于 `ip_rcv` 中，v6 的是 `ip6_rcf`
+- `NF_INET_LOCAL_IN` 对于所有发送到当前主机的入栈数据包，经过挂载点 `NF_INET_PRE_ROUTING` 并执行路由选择，挂载点位于方法 `ip_local_deliver` 中
+- `NF_INET_FORWARD` 对于所有转发的数据包，经过挂载点 `NF_INET_PRE_ROUTING` 并执行路由选择子系统查找后。挂载点位于 `ip_forward` 中
+- `NF_INET_POST_ROUTING` 所有要转发的数据包和当前主机生成的数据包都经过这个挂载点，挂载点位于 `ip_output` 中
+- `NF_INET_LOCAL_OUT` 当前主机生成的所有出战数据包都经过这个挂载点，挂载点位于方法 `__ip_local_out` 中
+
+```c
+static const struct nf_hook_ops ip_vs_ops4[] = {
+  /* 包过滤后，只更改VS/NAT的 source */
+  {
+    .hook   = ip_vs_reply4,
+    .pf   = NFPROTO_IPV4,
+    .hooknum  = NF_INET_LOCAL_IN,
+    .priority = NF_IP_PRI_NAT_SRC - 2,
+  },
+  /* 包过滤后，通过VS/DR、VS/TUN或VS/NAT(change destination)转发包，
+   * 这样过滤规则就可以应用于IPVS。 */
+  {
+    .hook   = ip_vs_remote_request4,
+    .pf   = NFPROTO_IPV4,
+    .hooknum  = NF_INET_LOCAL_IN,
+    .priority = NF_IP_PRI_NAT_SRC - 1,
+  },
+  /* 在 ip_vs_in 之前，只为 VS/NAT 更改source */
+  {
+    .hook   = ip_vs_local_reply4,
+    .pf   = NFPROTO_IPV4,
+    .hooknum  = NF_INET_LOCAL_OUT,
+    .priority = NF_IP_PRI_NAT_DST + 1,
+  },
+  /* 在 mangle 之后，调度和转发本地请求 */
+  {
+    .hook   = ip_vs_local_request4,
+    .pf   = NFPROTO_IPV4,
+    .hooknum  = NF_INET_LOCAL_OUT,
+    .priority = NF_IP_PRI_NAT_DST + 2,
+  },
+  /* 在包过滤之后（但在 ip_vs_out_icmp 之前），
+  *  捕获发往 0.0.0.0/0 的 icmp，用于传入的 IPVS 连接 */
+  {
+    .hook   = ip_vs_forward_icmp,
+    .pf   = NFPROTO_IPV4,
+    .hooknum  = NF_INET_FORWARD,
+    .priority = 99,
+  },
+  /* 包过滤后，只更改VS/NAT的 source */
+  {
+    .hook   = ip_vs_reply4,
+    .pf   = NFPROTO_IPV4,
+    .hooknum  = NF_INET_FORWARD,
+    .priority = 100,
+  },
+};
+```
+
+这里的 hook 函数是 `ip_vs_in` 是数据包的入口位置。从上边注册代码段中，可以知道它注册的挂载点位置是 `NF_INET_LOCAL_IN` 已经通过了
+prerouting 和 filter 路由查找的过程。
+假设在 DR 模式下，数据包转发将会经过如下过程：
+1. `[pp = ip_vs_proto_get(iph.protocol);](https://elixir.bootlin.com/linux/v5.11.2/source/net/netfilter/xt_ipvs.c#L81)` 查找是否是 LVS 所支持的协议
+   lvs 所支持。lvs 能够支持 tcp、udp、ah、esp 协议，如果不是 LVS  所支持的协议，那么将直接返回 NF_ACCEPT 也就没有继续执行下去的意义了
+2. 调度并新建连接信息 
+  根据数据包 5 元组相关字段进行查找 `conn_in_get`，这里假设是一个新连接的请求数据包，那么在连接表中是查不到连接表项，将会调用 `conn_schedule` 新建表项
+  新建表现的条件：
+  - 数据包必须携带 SYN 标记
+  - 数据包所访问请求必须是我们定义的 service 才行
+  满足上述条件之后，会调用 `ip_vs_schedule` 方法，从 svc 指向的 dests 中更具调度算法选出一个合适的后端服务器
+3. 在成功调度 dest 后，调用 `ip_vs_conn_new` 函数来常见真正的连接条目：
+  - 分配 cp 内存资源
+  - 设置定时器
+  - 填充相关字段
+  - 绑定并设置 dest 相关信息，调用 `ip_vs_bind_dest` 函数
+  - 绑定 conn 所需的 xmit 函数，调用 `ip_vs_bind_xmit` 函数
+  - 将 cp 连接条目 hash 到全局的连接表中
+
+
+
+
+
+
+
+
+
+

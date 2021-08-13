@@ -128,9 +128,13 @@ iptables 弥补方案：Calico 使用的是一个很短的优化过的规则链�
 
 
 问题十：ebpf 能否为其做加速？
-可以为其加入，复用的 netfilter 网关，所以在 PREROUTING - POSTOUTING  可以直接打通，中间的所有环节都会被跳过，不在经过多次轮询
+答：可以为其加入，复用的 netfilter 网关，所以在 PREROUTING - POSTOUTING  可以直接打通，中间的所有环节都会被跳过，不在经过多次轮询
 另外 iptables 虽然是遍历规则，但是可以通过 ipset 加速，从 O(n) 的查找时间减少至 O(1) 。CPU 损耗进一步降低，但是相对来说内存可能损耗较大
 
 参考文档：[深入理解iptables]https://cctrip.tech/deep_iptables/
 
 
+问题十一：如果 DR 模式不只是修改 DMAC 连着 DIP 一起修改会不会就可以直接返回数据了
+答：可以这么修改，但是深度思考了一下，如果 DIP 被修改了，那么数据包回到 client 就回变成 client  直连 dip 的意思，可能会导致网络不通
+或者是网络找不到主机，还是存在一定问题，除非一种解决方案就是通过本地路由器或者其他主机将 DIP 修改为 VIP，那么这个模式又像 NAT 模式了，
+所以猜想不成立
