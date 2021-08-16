@@ -138,3 +138,15 @@ iptables 弥补方案：Calico 使用的是一个很短的优化过的规则链�
 答：可以这么修改，但是深度思考了一下，如果 DIP 被修改了，那么数据包回到 client 就回变成 client  直连 dip 的意思，可能会导致网络不通
 或者是网络找不到主机，还是存在一定问题，除非一种解决方案就是通过本地路由器或者其他主机将 DIP 修改为 VIP，那么这个模式又像 NAT 模式了，
 所以猜想不成立
+
+
+问题十二：每种模式的都会修改数据包，每个数据包的被修改的 HOOK 点分别是哪里。（面试题问到）
+
+答： [负载均衡 LVS 入门教程详解 - 基础原理](https://www.linuxblogs.cn/articles/20010419.html) 三张图就可以看出来
+DR 模式流量经过  client -> PREROUTING->INPUT->OUTPUT->POSTROUTING（修改 MAC 地址）。DR 模式修改的是 MAC 地址，所以在 POSTROUTING 修改
+NAT 模式流量经过 client -> PREROUTING->INPUT->（修改 IP ）OUTPUT->POSTROUTING. NAT 模式通过修改目标IP ，所以在 INPUT->OUTPUT 过程中修改
+TUN 模式流量经过 client -> PREROUTING->INPUT->（添加 IP头 ）OUTPUT->POSTROUTING TUN 模式通过修改目标 IP 和 目标 MAC，所以应该涉及两处修改
+
+总结：通过图上显示就可以看出 PREROUTING、FORWARD、POSTROUTING 都工作在链路层，INPUT、OUTPUT 工作在网络层，所以修改 MAC 地址应该在 POSTROUTING 下，
+修改 IP 应该在 INPUT、OUTPUT 下。
+

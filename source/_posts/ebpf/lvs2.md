@@ -1,5 +1,5 @@
 ---
-title: LVS  学习： 源码深入理解
+title: LVS  学习： Ct 深入理解
 date: 2021-08-05 14:55:53
 categories: 
   - [eBPF]
@@ -307,8 +307,38 @@ prerouting 和 filter 路由查找的过程。
   - 将 cp 连接条目 hash 到全局的连接表中
 
 
-
-
+```c
+net/netfilter/ipvs/ip_vs_app.c
+net/netfilter/ipvs/ip_vs_conn.c
+net/netfilter/ipvs/ip_vs_core.c
+net/netfilter/ipvs/ip_vs_ctl.c
+net/netfilter/ipvs/ip_vs_dh.c         目的地址哈希调度
+net/netfilter/ipvs/ip_vs_est.c        简单的速率估计
+net/netfilter/ipvs/ip_vs_fo.c         添加了基于权重的初始功能
+net/netfilter/ipvs/ip_vs_ftp.c        ftp应用模块
+net/netfilter/ipvs/ip_vs_lblc.c           基于局部性的最少连接
+net/netfilter/ipvs/ip_vs_lblcr.c      带复制的基于局部性最少链接
+net/netfilter/ipvs/ip_vs_lc.c         最少连接调度
+net/netfilter/ipvs/ip_vs_mh.c         磁悬浮哈希调度模块
+net/netfilter/ipvs/ip_vs_nfct.c       支持IPVS的Netfilter连接跟踪
+net/netfilter/ipvs/ip_vs_nq.c         永不排队调度算法
+net/netfilter/ipvs/ip_vs_ovf.c        溢出连接调度模块
+net/netfilter/ipvs/ip_vs_pe.c         持久化模块
+net/netfilter/ipvs/ip_vs_pe_sip.c
+net/netfilter/ipvs/ip_vs_proto.c      transport协议支持ipv4负载均衡
+net/netfilter/ipvs/ip_vs_proto_ah_esp.c   针对IPV的AH/ESP IPSec负载平衡支持
+net/netfilter/ipvs/ip_vs_proto_tcp.c      IPVS的TCP负载平衡支持
+net/netfilter/ipvs/ip_vs_proto_udp.c    IPVS的UDP负载平衡支持
+net/netfilter/ipvs/ip_vs_rr.c           轮询调度算法
+net/netfilter/ipvs/ip_vs_sched.c
+net/netfilter/ipvs/ip_vs_sed.c          最少期望延迟调度算法
+net/netfilter/ipvs/ip_vs_sh.c           源地址哈希调度
+net/netfilter/ipvs/ip_vs_sync.c       
+net/netfilter/ipvs/ip_vs_wlc.c          加权最少连接
+net/netfilter/ipvs/ip_vs_wrr.c          加权轮询调度
+net/netfilter/ipvs/ip_vs_xmit.c
+```
+[KMSG_COMPONENT](https://elixir.bootlin.com/linux/v5.11.2/C/ident/KMSG_COMPONENT)
 
 
 
